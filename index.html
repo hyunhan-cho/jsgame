@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phaser 슈퍼 플랫폼 어드벤처</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.60.0/phaser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1e1e1e;
+            font-family: 'Press Start 2P', cursive;
+        }
+        #game-container {
+            box-shadow: 0 10px 50px rgba(0,0,0,0.8);
+            border-radius: 10px;
+            overflow: hidden;
+            border: 5px solid #fff;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+
+    <script>
+        // --- 게임 전역 변수 ---
+        let player, cursors, platforms, coins, enemies, goal, questionBlocks, movingPlatforms, powerups;
+        let score = 0;
+        let scoreText;
+        let gameOver = false;
+        let sounds = {};
+
+        // --- Phaser 게임 설정 ---
+        const config = {
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            parent: 'game-container',
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 800 },
+                    debug: false
+                }
+            },
+            scene: {
+                preload: preload,
+                create: create,
+                update: update
+            }
+        };
+
+        const game = new Phaser.Game(config);
+
+        // --- 게임 씬 함수 ---
+        function preload() {}
+
+        function create() {
+            // --- 사운드 설정 (최초 한 번만 실행) ---
+            if (Object.keys(sounds).length === 0) {
+                sounds.jump = new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.3, release: 0.1 } }).toDestination();
+                sounds.superJump = new Tone.Synth({ oscillator: { type: "sawtooth" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.2 } }).toDestination();
+                sounds.coin = new Tone.PolySynth(Tone.Synth, {
+                    oscillator: { type: "sine" },
+                    envelope: { attack: 0.005, decay: 0.1, sustain: 0.2, release: 0.2 }
+                }).toDestination();
+                sounds.stomp = new Tone.PluckSynth().toDestination();
+                sounds.death = new Tone.MembraneSynth().toDestination();
+                sounds.win = new Tone.Synth({ oscillator: { type: "square" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.2, release: 0.2 } }).toDestination();
+                sounds.powerup = new Tone.Synth({ oscillator: { type: "square" } }).toDestination();
+                sounds.blockHit = new Tone.MetalSynth({frequency: 100, envelope: {attack: 0.001, decay: 0.1, release: 0.05}, harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5}).toDestination();
+                
+                // 사운드 활성화를 위한 클릭 리스너도 한 번만 등록
+                this.input.on('pointerdown', () => {
+                    if (Tone.context.state !== 'running') {
+                        Tone.context.resume();
+                    }
+                }, this);
+            }
+
+            const worldWidth = 5000;
+
+            // --- 배경 생성 ---
+            this.add.rectangle(400, 300, 800, 600, 0x5c94fc).setScrollFactor(0);
+            for (let i = 0; i < 20; i++) {
+                this.add.ellipse(Phaser.Math.Between(50, worldWidth - 50), Phaser.Math.Between(50, 200), Phaser.Math.Between(100, 150), Phaser.Math.Between(50, 80), 0xffffff, 0.9);
+            }
+
+            this.physics.world.setBounds(0, 0, worldWidth, 600);
+
+            // --- 그룹 초기화 ---
+            platforms = this.physics.add.staticGroup();
+            movingPlatforms = this.physics.add.group({ allowGravity: false, immovable: true });
+            questionBlocks = this.physics.add.staticGroup();
+            coins = this.physics.add.group();
+            enemies = this.physics.add.group();
+            powerups = this.physics.add.group();
+            goal = this.physics.add.staticGroup();
+
+            // --- 지형 생성 ---
+            this.add.rectangle(0, 580, worldWidth, 40, 0x20bf6b).setOrigin(0);
+            platforms.create(worldWidth / 2, 585, null).setDisplaySize(worldWidth, 30).setBodySize(worldWidth, 30).refreshBody().setVisible(false);
+
+            // --- 레벨 디자인 ---
+            // 고정 플랫폼
+            [[300, 500], [900, 420], [1500, 430], [1800, 250], [2100, 480], [2700, 430], [3300, 420], [3900, 460], [4500, 480]].forEach(p => {
+                platforms.create(p[0], p[1], null).setDisplaySize(60, 40).refreshBody().setTexture(createBrickTexture(this, 60, 40));
+            });
+            
+            // 물음표 블록
+            [[600, 450, 'coins'], [1800, 400, 'star'], [3000, 470, 'coins'], [4200, 430, 'star']].forEach(b => {
+                const block = questionBlocks.create(b[0], b[1], createQuestionBlockTexture(this)).refreshBody();
+                block.rewardType = b[2]; // 보상 유형 저장
+            });
+
+            // 움직이는 발판 (type: 0=수평, 1=수직, range: 이동 범위)
+            [[1200, 470, 0, 200], [2400, 350, 1, 150], [3600, 440, 0, 250], [4600, 300, 1, 100]].forEach(p => {
+                const platform = movingPlatforms.create(p[0], p[1], createBrickTexture(this, 120, 30));
+                platform.body.setSize(120, 30);
+                platform.moveType = p[2];
+                platform.moveRange = p[3];
+                platform.moveStart = p[2] === 0 ? p[0] : p[1];
+                platform.setBounce(1);
+                platform.setVelocity(p[2] === 0 ? 100 : 0, p[2] === 1 ? 100 : 0);
+            });
+            
+            // --- 목표 지점 ---
+            const goalX = worldWidth - 100;
+            goal.create(goalX, 510, null).setSize(50, 120).setVisible(false);
+            this.add.rectangle(goalX, 510, 80, 120, 0xc0c0c0);
+            this.add.triangle(goalX, 400, goalX - 30, 420, goalX + 30, 420, 0xe74c3c);
+
+            // --- 플레이어 생성 ---
+            player = this.physics.add.sprite(100, 500, createCoconutPlayerTexture(this));
+            player.setBounce(0.1);
+            player.setCollideWorldBounds(true);
+            player.body.setCircle(20);
+            player.isInvincible = false;
+
+            // --- 카메라 설정 ---
+            this.cameras.main.setBounds(0, 0, worldWidth, 600);
+            this.cameras.main.startFollow(player, true, 0.08, 0.08);
+
+            // --- 코인 & 적 배치 ---
+            const coinTexture = createCoinTexture(this);
+            for (let x = 400; x < worldWidth - 200; x += 450) {
+                for (let i = 0; i < 3; i++) {
+                     coins.create(x + i * 30, Phaser.Math.Between(300, 450), coinTexture).setBounceY(0.3);
+                }
+            }
+            const enemyTexture = createEnemyTexture(this);
+            [[800, 530, {start: 700, end: 900}], [1600, 530, {start: 1500, end: 1700}], [2400, 250, {start: 2300, end: 2500}], [3200, 530, {start: 3100, end: 3300}], [4000, 530, {start: 3900, end: 4100}], [4800, 530, {start: 4700, end: 4900}]].forEach(pos => {
+                const enemy = enemies.create(pos[0], pos[1], enemyTexture);
+                enemy.setBounce(1).setCollideWorldBounds(true).setVelocityX(80 * (Math.random() > 0.5 ? 1 : -1));
+                enemy.patrolBounds = pos[2];
+                enemy.body.setSize(32, 32);
+            });
+            
+            // --- UI 생성 ---
+            scoreText = this.add.text(16, 16, 'Score: 0', { fontSize: '24px', fill: '#fff', fontStyle: 'bold', stroke: '#000', strokeThickness: 4 }).setScrollFactor(0);
+            
+            // --- 물리 충돌 설정 ---
+            this.physics.add.collider(player, platforms);
+            this.physics.add.collider(player, movingPlatforms);
+            this.physics.add.collider(player, questionBlocks, hitQuestionBlock, null, this);
+            this.physics.add.collider(coins, platforms);
+            this.physics.add.collider(enemies, platforms);
+            this.physics.add.collider(enemies, movingPlatforms);
+            this.physics.add.overlap(player, coins, collectCoin, null, this);
+            this.physics.add.collider(player, enemies, hitEnemy, null, this);
+            this.physics.add.overlap(player, powerups, collectPowerup, null, this);
+            this.physics.add.collider(player, goal, reachGoal, null, this);
+
+            cursors = this.input.keyboard.createCursorKeys();
+        }
+
+        function update() {
+            if (gameOver) {
+                // 게임오버 시 모든 움직임 정지
+                player.setVelocity(0, 0);
+                enemies.setVelocity(0, 0);
+                movingPlatforms.setVelocity(0,0);
+                return;
+            }
+
+            // 플레이어 이동
+            if (cursors.left.isDown) player.setVelocityX(-220);
+            else if (cursors.right.isDown) player.setVelocityX(220);
+            else player.setVelocityX(0);
+            
+            // 점프 & 슈퍼 점프
+            const onGround = player.body.touching.down;
+            if (cursors.up.isDown && onGround) {
+                if (cursors.right.isDown) { // 슈퍼 점프
+                    player.setVelocityY(-600);
+                    sounds.superJump.triggerAttackRelease("G5", "8n");
+                } else { // 일반 점프
+                    player.setVelocityY(-480);
+                    sounds.jump.triggerAttackRelease("C5", "8n");
+                }
+            }
+            
+            // 움직이는 발판 로직
+            movingPlatforms.children.iterate(p => {
+                if(p.active && p.moveType === 0) { // 수평
+                    if (p.x < p.moveStart) p.setVelocityX(100);
+                    if (p.x > p.moveStart + p.moveRange) p.setVelocityX(-100);
+                } else if (p.active) { // 수직
+                    if (p.y < p.moveStart) p.setVelocityY(100);
+                    if (p.y > p.moveStart + p.moveRange) p.setVelocityY(-100);
+                }
+            });
+
+            // 적 AI
+            enemies.children.iterate(e => {
+                if(e && e.active && e.patrolBounds) {
+                   if (e.x < e.patrolBounds.start) e.setVelocityX(Math.abs(e.body.velocity.x));
+                   if (e.x > e.patrolBounds.end) e.setVelocityX(-Math.abs(e.body.velocity.x));
+                }
+            });
+            if(player.y > this.physics.world.bounds.height) handlePlayerDeath(this);
+        }
+
+        // --- 보조 함수들 ---
+        function hitQuestionBlock(player, block) {
+            if (gameOver) return;
+            // 블록 아래에서 쳤을 때만 작동
+            if (player.body.touching.up && block.active) {
+                sounds.blockHit.triggerAttack("C4");
+                block.setTexture(createBrickTexture(this, 40, 40)); // 빈 블록 모양으로 변경
+                block.disableBody(true, false); // 물리 비활성화, 모습은 유지
+
+                if(block.rewardType === 'coins') {
+                    for(let i=0; i<5; i++){
+                        const coin = coins.create(block.x, block.y - 30, createCoinTexture(this));
+                        coin.setVelocity(Phaser.Math.Between(-50, 50), -300);
+                    }
+                } else if (block.rewardType === 'star') {
+                    const star = powerups.create(block.x, block.y - 40, createStarTexture(this));
+                    star.setVelocity(50, -200).setBounce(1).setCollideWorldBounds(true);
+                }
+                
+                // 블록 튀는 효과
+                this.tweens.add({ targets: block, y: block.y - 10, duration: 100, yoyo: true });
+            }
+        }
+        
+        function collectPowerup(player, powerup) {
+            if (gameOver) return;
+            powerup.disableBody(true, true);
+            player.isInvincible = true;
+            
+            sounds.powerup.triggerAttackRelease("C5", "0.1");
+            this.time.delayedCall(200, () => sounds.powerup.triggerAttackRelease("E5", "0.1"));
+            this.time.delayedCall(400, () => sounds.powerup.triggerAttackRelease("G5", "0.1"));
+
+            // 무적 상태 시각 효과 (깜빡임)
+            const invincibleTween = this.tweens.add({ targets: player, alpha: 0.5, duration: 200, yoyo: true, loop: 25 }); // 10초
+            
+            this.time.delayedCall(10000, () => {
+                player.isInvincible = false;
+                if(player.active) {
+                    invincibleTween.stop();
+                    player.setAlpha(1);
+                }
+            });
+        }
+        
+        function hitEnemy(player, enemy) {
+            if (gameOver) return;
+            if (player.isInvincible) {
+                enemy.disableBody(true, true);
+                score += 100;
+                scoreText.setText('Score: ' + score);
+            } else if (player.body.velocity.y > 0 && player.y < enemy.y - (enemy.body.height / 2)) {
+                enemy.disableBody(true, true);
+                player.setVelocityY(-250);
+                score += 50;
+                scoreText.setText('Score: ' + score);
+                sounds.stomp.triggerAttackRelease("C3", "8n");
+            } else {
+                handlePlayerDeath(this);
+            }
+        }
+        
+        function handlePlayerDeath(scene) {
+            if (gameOver || player.isInvincible) return;
+            
+            gameOver = true;
+            sounds.death.triggerAttackRelease("C2", "4n");
+
+            player.setTint(0xff0000);
+            scene.cameras.main.shake(300, 0.008);
+            createEndScreen(scene, false);
+        }
+
+        function collectCoin(player, coin) { 
+            if (gameOver) return;
+            coin.disableBody(true, true); 
+            score += 10; 
+            scoreText.setText('Score: ' + score); 
+            sounds.coin.triggerAttackRelease("E6", "8n"); 
+        }
+        
+        function reachGoal(player, goal) { 
+            if (gameOver) return; 
+            gameOver = true; 
+            player.setVelocityX(0); 
+            sounds.win.triggerAttackRelease("C5", "4n"); 
+            this.time.delayedCall(100, () => sounds.win.triggerAttackRelease("E5", "4n")); 
+            this.time.delayedCall(200, () => sounds.win.triggerAttackRelease("G5", "4n")); 
+            createEndScreen(this, true); 
+        }
+        
+        function createEndScreen(scene, isWin) {
+            const centerX = scene.cameras.main.worldView.x + scene.cameras.main.width / 2;
+            const centerY = scene.cameras.main.height / 2;
+            const text = isWin ? 'YOU WIN!' : 'GAME OVER';
+            const color = isWin ? '#ffd700' : '#ff0000';
+            scene.add.text(centerX, centerY - 50, text, { fontSize: '64px', fill: color, fontStyle: 'bold', stroke: '#000', strokeThickness: 8 }).setOrigin(0.5).setScrollFactor(0);
+            scene.add.text(centerX, centerY + 20, 'Final Score: ' + score, { fontSize: '32px', fill: '#fff', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setScrollFactor(0);
+
+            const restartText = scene.add.text(centerX, centerY + 80, '다시 시작하시겠습니까?', { fontSize: '24px', fill: '#fff', stroke: '#000', strokeThickness: 3}).setOrigin(0.5).setScrollFactor(0).setInteractive();
+            const restartHandler = () => {
+                // 한 번만 동작하도록 리스너 제거
+                restartText.removeListener('pointerdown', restartHandler);
+                score = 0; 
+                gameOver = false;
+                scene.scene.restart();
+            };
+            restartText.on('pointerdown', restartHandler);
+            restartText.on('pointerover', () => restartText.setFill('#ffff00'));
+            restartText.on('pointerout', () => restartText.setFill('#ffffff'));
+        }
+
+
+        // --- 그래픽 텍스처 생성 함수들 ---
+        function createCoconutPlayerTexture(scene) {
+            const key = 'coconutPlayer'; if (scene.textures.exists(key)) return key;
+            const g = scene.make.graphics({ width: 40, height: 40 }, false);
+            g.fillStyle(0x6B4F3A); g.fillEllipse(20, 20, 40, 40);
+            g.fillStyle(0xffffff); g.fillEllipse(13, 18, 10, 12); g.fillEllipse(27, 18, 10, 12);
+            g.fillStyle(0x000000); g.fillCircle(15, 20, 4); g.fillCircle(25, 20, 4);
+            g.fillStyle(0x2ecc71); g.fillTriangle(20, 0, 15, 8, 25, 8);
+            g.generateTexture(key, 40, 40); g.destroy(); return key;
+        }
+        function createCoinTexture(scene, size = 24) {
+             const key = `coinTexture${size}`; if (scene.textures.exists(key)) return key;
+             const g = scene.make.graphics({ width: size, height: size }, false);
+             g.fillStyle(0xffd700); g.fillCircle(size/2, size/2, size/2);
+             g.fillStyle(0xffa500); g.fillCircle(size/2, size/2, size/3);
+             g.generateTexture(key, size, size); g.destroy(); return key;
+        }
+        function createEnemyTexture(scene) {
+            const key = 'enemyTexture'; if (scene.textures.exists(key)) return key;
+            const g = scene.make.graphics({ width: 32, height: 32 }, false);
+            g.fillStyle(0x8B4513); g.fillEllipse(16, 17, 32, 28);
+            g.fillStyle(0xffffff); g.fillEllipse(10, 12, 8, 10); g.fillEllipse(22, 12, 8, 10);
+            g.fillStyle(0x000000); g.fillCircle(10, 12, 3); g.fillCircle(22, 12, 3);
+            g.generateTexture(key, 32, 32); g.destroy(); return key;
+        }
+        function createBrickTexture(scene, width, height) {
+            const key = `brickTexture${width}x${height}`; if (scene.textures.exists(key)) return key;
+            const g = scene.make.graphics({ width, height }, false);
+            g.fillStyle(0xD2691E); g.fillRect(0, 0, width, height);
+            g.lineStyle(2, 0x8B4513); g.strokeRect(0, 0, width, height);
+            g.lineBetween(0, height/2, width, height/2);
+            if (width > 50) g.lineBetween(width/2, 0, width/2, height);
+            g.generateTexture(key, width, height); g.destroy(); return key;
+        }
+        function createQuestionBlockTexture(scene) {
+            const key = 'qBlock'; if (scene.textures.exists(key)) return key;
+            const rt = scene.make.renderTexture({ width: 40, height: 40 }, false);
+            const g = scene.make.graphics({ add: false });
+            g.fillStyle(0xf39c12);
+            g.fillRect(0, 0, 40, 40);
+            rt.draw(g);
+            g.destroy();
+            const text = scene.make.text({
+                x: 12,
+                y: 5,
+                text: '?',
+                style: {
+                    font: '28px "Press Start 2P"',
+                    fill: '#ffffff'
+                },
+                add: false
+            });
+            rt.draw(text);
+            text.destroy();
+            rt.saveTexture(key);
+            return key;
+        }
+        function createStarTexture(scene) {
+            const key = 'star';
+            if (scene.textures.exists(key)) return key;
+            const g = scene.make.graphics({ width: 32, height: 32 }, false);
+            g.fillStyle(0xf1c40f);
+            const points = [];
+            const centerX = 16, centerY = 16;
+            const outerRadius = 15, innerRadius = 7;
+            let angle = -Math.PI / 2;
+            const angleStep = Math.PI / 5;
+            for (let i = 0; i < 10; i++) {
+                const radius = i % 2 === 0 ? outerRadius : innerRadius;
+                points.push(centerX + radius * Math.cos(angle), centerY + radius * Math.sin(angle));
+                angle += angleStep;
+            }
+            g.fillPoints(points, true);
+            g.fillStyle(0x000000);
+            g.fillCircle(11, 13, 3);
+            g.fillCircle(21, 13, 3);
+            g.generateTexture(key, 32, 32);
+            g.destroy();
+            return key;
+        }
+    </script>
+</body>
+</html>
+
