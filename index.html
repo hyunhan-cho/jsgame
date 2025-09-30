@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Phaser 슈퍼 플랫폼 어드벤처</title>
+    <title>슈퍼 코코넛 어드벤처</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.60.0/phaser.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
     <style>
@@ -15,14 +15,14 @@
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            background: #1e1e1e;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             font-family: 'Press Start 2P', cursive;
         }
         #game-container {
-            box-shadow: 0 10px 50px rgba(0,0,0,0.8);
-            border-radius: 10px;
+            box-shadow: 0 20px 80px rgba(0,0,0,0.8);
+            border-radius: 15px;
             overflow: hidden;
-            border: 5px solid #fff;
+            border: 6px solid #ffd700;
         }
     </style>
 </head>
@@ -30,23 +30,28 @@
     <div id="game-container"></div>
 
     <script>
-        // --- 게임 전역 변수 ---
-        let player, cursors, platforms, coins, enemies, goal, questionBlocks, movingPlatforms, powerups;
+        // 전역 변수
+        let player, cursors, platforms, coins, enemies, goal, questionBlocks, movingPlatforms, powerups, spikes, springs;
         let score = 0;
-        let scoreText;
+        let lives = 3;
+        let currentLevel = 1;
+        let scoreText, livesText, levelText, timerText;
         let gameOver = false;
         let sounds = {};
+        let levelTime = 0;
+        let timeBonus = 1000;
+        // 날개 이펙트를 위한 전역 변수 추가
+        let wingL, wingR;
 
-        // --- Phaser 게임 설정 ---
         const config = {
             type: Phaser.AUTO,
-            width: 800,
+            width: 900,
             height: 600,
             parent: 'game-container',
             physics: {
                 default: 'arcade',
                 arcade: {
-                    gravity: { y: 800 },
+                    gravity: { y: 900 },
                     debug: false
                 }
             },
@@ -59,160 +64,192 @@
 
         const game = new Phaser.Game(config);
 
-        // --- 게임 씬 함수 ---
         function preload() {}
 
         function create() {
-            // --- 사운드 설정 (최초 한 번만 실행) ---
+            // --- 수정된 부분: 게임 시작 시 날개 오브젝트 초기화 ---
+            if (wingL) wingL.destroy();
+            if (wingR) wingR.destroy();
+            wingL = null;
+            wingR = null;
+            // --- 수정 끝 ---
+
+            // 사운드 초기화
             if (Object.keys(sounds).length === 0) {
                 sounds.jump = new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.3, release: 0.1 } }).toDestination();
                 sounds.superJump = new Tone.Synth({ oscillator: { type: "sawtooth" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.2 } }).toDestination();
-                sounds.coin = new Tone.PolySynth(Tone.Synth, {
-                    oscillator: { type: "sine" },
-                    envelope: { attack: 0.005, decay: 0.1, sustain: 0.2, release: 0.2 }
-                }).toDestination();
+                sounds.coin = new Tone.PolySynth(Tone.Synth).toDestination();
                 sounds.stomp = new Tone.PluckSynth().toDestination();
                 sounds.death = new Tone.MembraneSynth().toDestination();
-                sounds.win = new Tone.Synth({ oscillator: { type: "square" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.2, release: 0.2 } }).toDestination();
+                sounds.win = new Tone.Synth({ oscillator: { type: "square" } }).toDestination();
                 sounds.powerup = new Tone.Synth({ oscillator: { type: "square" } }).toDestination();
-                sounds.blockHit = new Tone.MetalSynth({frequency: 100, envelope: {attack: 0.001, decay: 0.1, release: 0.05}, harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5}).toDestination();
+                sounds.blockHit = new Tone.MetalSynth().toDestination();
+                sounds.spring = new Tone.Synth({ oscillator: { type: "sine" } }).toDestination();
                 
-                // 사운드 활성화를 위한 클릭 리스너도 한 번만 등록
                 this.input.on('pointerdown', () => {
-                    if (Tone.context.state !== 'running') {
-                        Tone.context.resume();
-                    }
+                    if (Tone.context.state !== 'running') Tone.context.resume();
                 }, this);
             }
 
-            const worldWidth = 5000;
+            const worldWidth = 6000 + (currentLevel * 1000);
+            levelTime = 0;
 
-            // --- 배경 생성 ---
-            this.add.rectangle(400, 300, 800, 600, 0x5c94fc).setScrollFactor(0);
-            for (let i = 0; i < 20; i++) {
-                this.add.ellipse(Phaser.Math.Between(50, worldWidth - 50), Phaser.Math.Between(50, 200), Phaser.Math.Between(100, 150), Phaser.Math.Between(50, 80), 0xffffff, 0.9);
+            // 배경
+            const bgColor = currentLevel === 1 ? 0x5c94fc : currentLevel === 2 ? 0x9b59b6 : 0x2c3e50;
+            this.add.rectangle(450, 300, 900, 600, bgColor).setScrollFactor(0);
+            
+            // 구름 or 별
+            for (let i = 0; i < 25; i++) {
+                if (currentLevel <= 2) {
+                    this.add.ellipse(Phaser.Math.Between(50, worldWidth), Phaser.Math.Between(50, 200), 
+                        Phaser.Math.Between(100, 150), Phaser.Math.Between(50, 80), 0xffffff, 0.8);
+                } else {
+                    this.add.star(Phaser.Math.Between(50, worldWidth), Phaser.Math.Between(50, 250), 
+                        5, 3, 6, 0xffffff);
+                }
             }
 
             this.physics.world.setBounds(0, 0, worldWidth, 600);
 
-            // --- 그룹 초기화 ---
+            // 그룹 초기화
             platforms = this.physics.add.staticGroup();
             movingPlatforms = this.physics.add.group({ allowGravity: false, immovable: true });
             questionBlocks = this.physics.add.staticGroup();
             coins = this.physics.add.group();
             enemies = this.physics.add.group();
             powerups = this.physics.add.group();
+            spikes = this.physics.add.staticGroup();
+            springs = this.physics.add.staticGroup();
             goal = this.physics.add.staticGroup();
 
-            // --- 지형 생성 ---
+            // 바닥
             this.add.rectangle(0, 580, worldWidth, 40, 0x20bf6b).setOrigin(0);
             platforms.create(worldWidth / 2, 585, null).setDisplaySize(worldWidth, 30).setBodySize(worldWidth, 30).refreshBody().setVisible(false);
 
-            // --- 레벨 디자인 ---
-            // 고정 플랫폼
-            [[300, 500], [900, 420], [1500, 430], [1800, 250], [2100, 480], [2700, 430], [3300, 420], [3900, 460], [4500, 480]].forEach(p => {
-                platforms.create(p[0], p[1], null).setDisplaySize(60, 40).refreshBody().setTexture(createBrickTexture(this, 60, 40));
-            });
-            
-            // 물음표 블록
-            [[600, 450, 'coins'], [1800, 400, 'star'], [3000, 470, 'coins'], [4200, 430, 'star']].forEach(b => {
-                const block = questionBlocks.create(b[0], b[1], createQuestionBlockTexture(this)).refreshBody();
-                block.rewardType = b[2]; // 보상 유형 저장
-            });
+            // 레벨별 맵 생성
+            createLevelMap(this, worldWidth, currentLevel);
 
-            // 움직이는 발판 (type: 0=수평, 1=수직, range: 이동 범위)
-            [[1200, 470, 0, 200], [2400, 350, 1, 150], [3600, 440, 0, 250], [4600, 300, 1, 100]].forEach(p => {
-                const platform = movingPlatforms.create(p[0], p[1], createBrickTexture(this, 120, 30));
-                platform.body.setSize(120, 30);
-                platform.moveType = p[2];
-                platform.moveRange = p[3];
-                platform.moveStart = p[2] === 0 ? p[0] : p[1];
-                platform.setBounce(1);
-                platform.setVelocity(p[2] === 0 ? 100 : 0, p[2] === 1 ? 100 : 0);
-            });
-            
-            // --- 목표 지점 ---
-            const goalX = worldWidth - 100;
-            goal.create(goalX, 510, null).setSize(50, 120).setVisible(false);
-            this.add.rectangle(goalX, 510, 80, 120, 0xc0c0c0);
-            this.add.triangle(goalX, 400, goalX - 30, 420, goalX + 30, 420, 0xe74c3c);
+            // 골 지점
+            const goalX = worldWidth - 150;
+            goal.create(goalX, 510, null).setSize(60, 120).setVisible(false);
+            this.add.rectangle(goalX, 510, 100, 120, 0xffd700);
+            this.add.star(goalX, 450, 5, 20, 40, 0xff6b6b).setOrigin(0.5);
+            this.add.text(goalX, 520, 'GOAL', { fontSize: '20px', fill: '#000', fontStyle: 'bold' }).setOrigin(0.5);
 
-            // --- 플레이어 생성 ---
+            // 플레이어
             player = this.physics.add.sprite(100, 500, createCoconutPlayerTexture(this));
             player.setBounce(0.1);
             player.setCollideWorldBounds(true);
             player.body.setCircle(20);
             player.isInvincible = false;
+            player.canDoubleJump = false;
+            player.hasDoubleJumped = false;
 
-            // --- 카메라 설정 ---
+            // 카메라
             this.cameras.main.setBounds(0, 0, worldWidth, 600);
-            this.cameras.main.startFollow(player, true, 0.08, 0.08);
+            this.cameras.main.startFollow(player, true, 0.1, 0.1);
 
-            // --- 코인 & 적 배치 ---
-            const coinTexture = createCoinTexture(this);
-            for (let x = 400; x < worldWidth - 200; x += 450) {
-                for (let i = 0; i < 3; i++) {
-                     coins.create(x + i * 30, Phaser.Math.Between(300, 450), coinTexture).setBounceY(0.3);
-                }
-            }
-            const enemyTexture = createEnemyTexture(this);
-            [[800, 530, {start: 700, end: 900}], [1600, 530, {start: 1500, end: 1700}], [2400, 250, {start: 2300, end: 2500}], [3200, 530, {start: 3100, end: 3300}], [4000, 530, {start: 3900, end: 4100}], [4800, 530, {start: 4700, end: 4900}]].forEach(pos => {
-                const enemy = enemies.create(pos[0], pos[1], enemyTexture);
-                enemy.setBounce(1).setCollideWorldBounds(true).setVelocityX(80 * (Math.random() > 0.5 ? 1 : -1));
-                enemy.patrolBounds = pos[2];
-                enemy.body.setSize(32, 32);
-            });
+            // UI
+            scoreText = this.add.text(16, 16, `점수: ${score}`, { 
+                fontSize: '20px', fill: '#fff', fontStyle: 'bold', stroke: '#000', strokeThickness: 4 
+            }).setScrollFactor(0);
             
-            // --- UI 생성 ---
-            scoreText = this.add.text(16, 16, 'Score: 0', { fontSize: '24px', fill: '#fff', fontStyle: 'bold', stroke: '#000', strokeThickness: 4 }).setScrollFactor(0);
+            livesText = this.add.text(16, 46, `❤️ x ${lives}`, { 
+                fontSize: '20px', fill: '#ff0000', fontStyle: 'bold', stroke: '#000', strokeThickness: 4 
+            }).setScrollFactor(0);
             
-            // --- 물리 충돌 설정 ---
+            levelText = this.add.text(16, 76, `레벨: ${currentLevel}`, { 
+                fontSize: '20px', fill: '#ffd700', fontStyle: 'bold', stroke: '#000', strokeThickness: 4 
+            }).setScrollFactor(0);
+
+            timerText = this.add.text(750, 16, `시간: 0`, { 
+                fontSize: '20px', fill: '#fff', fontStyle: 'bold', stroke: '#000', strokeThickness: 4 
+            }).setScrollFactor(0);
+
+            // 충돌 설정
             this.physics.add.collider(player, platforms);
             this.physics.add.collider(player, movingPlatforms);
             this.physics.add.collider(player, questionBlocks, hitQuestionBlock, null, this);
             this.physics.add.collider(coins, platforms);
+            this.physics.add.collider(coins, movingPlatforms);
             this.physics.add.collider(enemies, platforms);
             this.physics.add.collider(enemies, movingPlatforms);
             this.physics.add.overlap(player, coins, collectCoin, null, this);
             this.physics.add.collider(player, enemies, hitEnemy, null, this);
             this.physics.add.overlap(player, powerups, collectPowerup, null, this);
+            this.physics.add.overlap(player, spikes, hitSpike, null, this);
+            this.physics.add.overlap(player, springs, hitSpring, null, this);
             this.physics.add.collider(player, goal, reachGoal, null, this);
 
             cursors = this.input.keyboard.createCursorKeys();
+            this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
         }
 
-        function update() {
-            if (gameOver) {
-                // 게임오버 시 모든 움직임 정지
-                player.setVelocity(0, 0);
-                enemies.setVelocity(0, 0);
-                movingPlatforms.setVelocity(0,0);
+        function update(time, delta) {
+            if (gameOver || !player.active) {
+                if (player.active) player.setVelocity(0, 0);
                 return;
             }
 
-            // 플레이어 이동
-            if (cursors.left.isDown) player.setVelocityX(-220);
-            else if (cursors.right.isDown) player.setVelocityX(220);
-            else player.setVelocityX(0);
-            
-            // 점프 & 슈퍼 점프
-            const onGround = player.body.touching.down;
-            if (cursors.up.isDown && onGround) {
-                if (cursors.right.isDown) { // 슈퍼 점프
-                    player.setVelocityY(-600);
-                    sounds.superJump.triggerAttackRelease("G5", "8n");
-                } else { // 일반 점프
-                    player.setVelocityY(-480);
-                    sounds.jump.triggerAttackRelease("C5", "8n");
-                }
+            // 타이머
+            levelTime += delta / 1000;
+            timerText.setText(`시간: ${Math.floor(levelTime)}`);
+
+            // 이동
+            const moveSpeed = 250;
+            if (cursors.left.isDown) {
+                player.setVelocityX(-moveSpeed);
+                player.setFlipX(true);
+            } else if (cursors.right.isDown) {
+                player.setVelocityX(moveSpeed);
+                player.setFlipX(false);
+            } else {
+                player.setVelocityX(0);
             }
             
-            // 움직이는 발판 로직
+            // 점프
+            const onGround = player.body.touching.down;
+            if (onGround) {
+                player.hasDoubleJumped = false;
+            }
+
+            if (Phaser.Input.Keyboard.JustDown(cursors.up) || Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
+                if (onGround) {
+                    player.setVelocityY(-520);
+                    sounds.jump.triggerAttackRelease("C5", "8n");
+                } else if (player.canDoubleJump && !player.hasDoubleJumped) {
+                    player.setVelocityY(-520);
+                    player.hasDoubleJumped = true;
+                    sounds.superJump.triggerAttackRelease("G5", "8n");
+                    
+                    // 더블점프 이펙트
+                    const circle = this.add.circle(player.x, player.y, 30, 0x00ff00, 0.5);
+                    this.tweens.add({
+                        targets: circle,
+                        scale: 2,
+                        alpha: 0,
+                        duration: 300,
+                        onComplete: () => circle.destroy()
+                    });
+                }
+            }
+
+            // --- 수정된 부분: 날개 위치와 애니메이션 업데이트 ---
+            if (player.canDoubleJump && wingL && wingR) {
+                wingL.setPosition(player.x - 20, player.y - 5);
+                wingR.setPosition(player.x + 20, player.y - 5);
+                const flap = Math.sin(time / 150) * 15;
+                wingL.setAngle(flap);
+                wingR.setAngle(flap);
+            }
+            // --- 수정 끝 ---
+            
+            // 움직이는 플랫폼
             movingPlatforms.children.iterate(p => {
-                if(p.active && p.moveType === 0) { // 수평
+                if (p.active && p.moveType === 0) {
                     if (p.x < p.moveStart) p.setVelocityX(100);
                     if (p.x > p.moveStart + p.moveRange) p.setVelocityX(-100);
-                } else if (p.active) { // 수직
+                } else if (p.active && p.moveType === 1) {
                     if (p.y < p.moveStart) p.setVelocityY(100);
                     if (p.y > p.moveStart + p.moveRange) p.setVelocityY(-100);
                 }
@@ -220,176 +257,469 @@
 
             // 적 AI
             enemies.children.iterate(e => {
-                if(e && e.active && e.patrolBounds) {
-                   if (e.x < e.patrolBounds.start) e.setVelocityX(Math.abs(e.body.velocity.x));
-                   if (e.x > e.patrolBounds.end) e.setVelocityX(-Math.abs(e.body.velocity.x));
+                if (e && e.active && e.patrolBounds) {
+                    if (e.x < e.patrolBounds.start) e.setVelocityX(Math.abs(e.body.velocity.x));
+                    if (e.x > e.patrolBounds.end) e.setVelocityX(-Math.abs(e.body.velocity.x));
                 }
             });
-            if(player.y > this.physics.world.bounds.height) handlePlayerDeath(this);
+
+            if (player.y > this.physics.world.bounds.height + 50) handlePlayerDeath(this);
         }
 
-        // --- 보조 함수들 ---
-        function hitQuestionBlock(player, block) {
-            if (gameOver) return;
-            // 블록 아래에서 쳤을 때만 작동
-            if (player.body.touching.up && block.active) {
-                sounds.blockHit.triggerAttack("C4");
-                block.setTexture(createBrickTexture(this, 40, 40)); // 빈 블록 모양으로 변경
-                block.disableBody(true, false); // 물리 비활성화, 모습은 유지
+        function createLevelMap(scene, worldWidth, level) {
+            // 레벨 1: 초급
+            if (level === 1) {
+                [[400, 500], [700, 450], [1000, 400], [1400, 480], [1800, 420], [2200, 380], 
+                 [2600, 440], [3000, 400], [3400, 460], [3800, 420], [4200, 480], [4600, 440], 
+                 [5000, 400], [5400, 460]].forEach(p => {
+                    platforms.create(p[0], p[1], null).setDisplaySize(80, 30).refreshBody()
+                        .setTexture(createBrickTexture(scene, 80, 30));
+                });
 
-                if(block.rewardType === 'coins') {
-                    for(let i=0; i<5; i++){
+                [[500, 450, 'coins'], [1200, 350, 'star'], [2000, 370, 'coins'], 
+                 [2800, 390, 'doubleJump'], [3600, 410, 'coins'], [4400, 430, 'star'], 
+                 [5200, 350, 'coins']].forEach(b => {
+                    const block = questionBlocks.create(b[0], b[1], createQuestionBlockTexture(scene)).refreshBody();
+                    block.rewardType = b[2];
+                });
+
+                [[1100, 470, 0, 250], [2500, 350, 1, 180], [3900, 440, 0, 300]].forEach(p => {
+                    const platform = movingPlatforms.create(p[0], p[1], createBrickTexture(scene, 120, 25));
+                    platform.body.setSize(120, 25);
+                    platform.moveType = p[2];
+                    platform.moveRange = p[3];
+                    platform.moveStart = p[2] === 0 ? p[0] : p[1];
+                    platform.setVelocity(p[2] === 0 ? 100 : 0, p[2] === 1 ? 100 : 0);
+                });
+
+                // 스프링
+                [1500, 3000, 4500].forEach(x => {
+                    springs.create(x, 560, createSpringTexture(scene)).refreshBody();
+                });
+            }
+            // 레벨 2: 중급
+            else if (level === 2) {
+                [[300, 500], [600, 450], [900, 380], [1300, 320], [1700, 400], [2100, 320], 
+                 [2500, 380], [2900, 300], [3300, 380], [3700, 440], [4100, 360], [4500, 420], 
+                 [4900, 340], [5300, 400], [5700, 460]].forEach(p => {
+                    platforms.create(p[0], p[1], null).setDisplaySize(70, 25).refreshBody()
+                        .setTexture(createBrickTexture(scene, 70, 25));
+                });
+
+                [[700, 400, 'star'], [1400, 270, 'doubleJump'], [2200, 270, 'coins'], 
+                 [3000, 250, 'star'], [3800, 390, 'coins'], [4600, 370, 'doubleJump'], 
+                 [5400, 350, 'star']].forEach(b => {
+                    const block = questionBlocks.create(b[0], b[1], createQuestionBlockTexture(scene)).refreshBody();
+                    block.rewardType = b[2];
+                });
+
+                [[1000, 450, 0, 200], [1900, 350, 1, 150], [2700, 300, 0, 250], 
+                 [3500, 400, 1, 180], [4300, 360, 0, 220], [5100, 420, 1, 160]].forEach(p => {
+                    const platform = movingPlatforms.create(p[0], p[1], createBrickTexture(scene, 100, 20));
+                    platform.body.setSize(100, 20);
+                    platform.moveType = p[2];
+                    platform.moveRange = p[3];
+                    platform.moveStart = p[2] === 0 ? p[0] : p[1];
+                    platform.setVelocity(p[2] === 0 ? 120 : 0, p[2] === 1 ? 120 : 0);
+                });
+
+                // 가시
+                [[1200, 570], [2400, 570], [3600, 570], [4800, 570]].forEach(pos => {
+                    for (let i = 0; i < 3; i++) {
+                        spikes.create(pos[0] + i * 40, pos[1], createSpikeTexture(scene)).refreshBody();
+                    }
+                });
+
+                [800, 2200, 3800, 5200].forEach(x => {
+                    springs.create(x, 560, createSpringTexture(scene)).refreshBody();
+                });
+            }
+            // 레벨 3: 고급
+            else {
+                [[250, 520], [500, 460], [750, 380], [1050, 300], [1400, 240], [1750, 320], 
+                 [2100, 260], [2450, 340], [2800, 280], [3150, 360], [3500, 300], [3850, 380], 
+                 [4200, 320], [4550, 400], [4900, 340], [5250, 420], [5600, 360], [5950, 440]].forEach(p => {
+                    platforms.create(p[0], p[1], null).setDisplaySize(60, 20).refreshBody()
+                        .setTexture(createBrickTexture(scene, 60, 20));
+                });
+
+                [[600, 410, 'doubleJump'], [1150, 250, 'star'], [1850, 270, 'doubleJump'], 
+                 [2550, 290, 'star'], [3250, 310, 'coins'], [3950, 330, 'doubleJump'], 
+                 [4650, 350, 'star'], [5350, 370, 'coins']].forEach(b => {
+                    const block = questionBlocks.create(b[0], b[1], createQuestionBlockTexture(scene)).refreshBody();
+                    block.rewardType = b[2];
+                });
+
+                [[900, 430, 0, 180], [1550, 320, 1, 120], [2250, 340, 0, 200], 
+                 [2950, 280, 1, 140], [3650, 380, 0, 220], [4350, 320, 1, 160], 
+                 [5050, 390, 0, 200], [5750, 360, 1, 140]].forEach(p => {
+                    const platform = movingPlatforms.create(p[0], p[1], createBrickTexture(scene, 80, 18));
+                    platform.body.setSize(80, 18);
+                    platform.moveType = p[2];
+                    platform.moveRange = p[3];
+                    platform.moveStart = p[2] === 0 ? p[0] : p[1];
+                    platform.setVelocity(p[2] === 0 ? 150 : 0, p[2] === 1 ? 150 : 0);
+                });
+
+                [[800, 570], [1400, 570], [2000, 570], [2600, 570], [3200, 570], 
+                 [3800, 570], [4400, 570], [5000, 570], [5600, 570]].forEach(pos => {
+                    for (let i = 0; i < 4; i++) {
+                        spikes.create(pos[0] + i * 35, pos[1], createSpikeTexture(scene)).refreshBody();
+                    }
+                });
+
+                [1100, 2300, 3500, 4700, 5900].forEach(x => {
+                    springs.create(x, 560, createSpringTexture(scene)).refreshBody();
+                });
+            }
+
+            // 코인 배치
+            const coinTexture = createCoinTexture(scene);
+            const coinCount = 15 + (level * 5);
+            for (let i = 0; i < coinCount; i++) {
+                const x = Phaser.Math.Between(300, worldWidth - 300);
+                const y = Phaser.Math.Between(200, 500);
+                coins.create(x, y, coinTexture).setBounceY(0.3);
+            }
+
+            // 적 배치
+            const enemyTexture = createEnemyTexture(scene);
+            const enemyCount = 8 + (level * 2);
+            for (let i = 0; i < enemyCount; i++) {
+                const x = Phaser.Math.Between(500, worldWidth - 500);
+                const enemy = enemies.create(x, 530, enemyTexture);
+                const patrolRange = 200 + (level * 50);
+                enemy.setBounce(1).setCollideWorldBounds(true)
+                    .setVelocityX(Phaser.Math.Between(80, 120 + level * 20) * (Math.random() > 0.5 ? 1 : -1));
+                enemy.patrolBounds = { start: x - patrolRange, end: x + patrolRange };
+                enemy.body.setSize(32, 32);
+            }
+        }
+
+        function hitQuestionBlock(player, block) {
+            if (gameOver || !block.active) return;
+            // 플레이어가 블록을 아래에서 쳤을 때만 작동
+            if (player.body.touching.up && block.body.touching.down) {
+                sounds.blockHit.triggerAttack("C4");
+                block.setTexture(createBrickTexture(this, 40, 40));
+                block.disableBody(true, false);
+
+                if (block.rewardType === 'coins') {
+                    for (let i = 0; i < 5; i++) {
                         const coin = coins.create(block.x, block.y - 30, createCoinTexture(this));
                         coin.setVelocity(Phaser.Math.Between(-50, 50), -300);
                     }
                 } else if (block.rewardType === 'star') {
                     const star = powerups.create(block.x, block.y - 40, createStarTexture(this));
                     star.setVelocity(50, -200).setBounce(1).setCollideWorldBounds(true);
+                    star.powerType = 'invincible';
+                } else if (block.rewardType === 'doubleJump') {
+                    const wing = powerups.create(block.x, block.y - 40, createWingTexture(this));
+                    wing.setVelocity(30, -200).setBounce(1).setCollideWorldBounds(true);
+                    wing.powerType = 'doubleJump';
                 }
                 
-                // 블록 튀는 효과
                 this.tweens.add({ targets: block, y: block.y - 10, duration: 100, yoyo: true });
             }
         }
-        
+
         function collectPowerup(player, powerup) {
             if (gameOver) return;
             powerup.disableBody(true, true);
-            player.isInvincible = true;
-            
-            sounds.powerup.triggerAttackRelease("C5", "0.1");
-            this.time.delayedCall(200, () => sounds.powerup.triggerAttackRelease("E5", "0.1"));
-            this.time.delayedCall(400, () => sounds.powerup.triggerAttackRelease("G5", "0.1"));
 
-            // 무적 상태 시각 효과 (깜빡임)
-            const invincibleTween = this.tweens.add({ targets: player, alpha: 0.5, duration: 200, yoyo: true, loop: 25 }); // 10초
-            
-            this.time.delayedCall(10000, () => {
-                player.isInvincible = false;
-                if(player.active) {
-                    invincibleTween.stop();
-                    player.setAlpha(1);
+            if (powerup.powerType === 'invincible') {
+                player.isInvincible = true;
+                sounds.powerup.triggerAttackRelease("C5", "0.1");
+                this.time.delayedCall(200, () => sounds.powerup.triggerAttackRelease("E5", "0.1"));
+                this.time.delayedCall(400, () => sounds.powerup.triggerAttackRelease("G5", "0.1"));
+
+                const invincibleTween = this.tweens.add({ 
+                    targets: player, alpha: 0.5, duration: 150, yoyo: true, loop: 40 
+                });
+                
+                this.time.delayedCall(12000, () => {
+                    player.isInvincible = false;
+                    if (player.active) {
+                        invincibleTween.stop();
+                        player.setAlpha(1);
+                    }
+                });
+            } else if (powerup.powerType === 'doubleJump') {
+                player.canDoubleJump = true;
+                sounds.powerup.triggerAttackRelease("G5", "0.2");
+                
+                // --- 수정된 부분: 날개 이펙트 생성 및 관리 ---
+                if (!wingL) {
+                    wingL = this.add.triangle(0, 0, 0, 0, 20, 10, 0, 20, 0x00ff00, 0.9).setOrigin(0.5, 0.5);
+                    wingR = this.add.triangle(0, 0, 0, 0, -20, 10, 0, 20, 0x00ff00, 0.9).setOrigin(0.5, 0.5);
                 }
-            });
+                
+                this.time.delayedCall(15000, () => {
+                    player.canDoubleJump = false;
+                    if (wingL) {
+                        wingL.destroy();
+                        wingL = null;
+                    }
+                    if (wingR) {
+                        wingR.destroy();
+                        wingR = null;
+                    }
+                });
+                // --- 수정 끝 ---
+            }
         }
-        
+
         function hitEnemy(player, enemy) {
-            if (gameOver) return;
+            if (gameOver || !player.active) return;
             if (player.isInvincible) {
                 enemy.disableBody(true, true);
                 score += 100;
-                scoreText.setText('Score: ' + score);
-            } else if (player.body.velocity.y > 0 && player.y < enemy.y - (enemy.body.height / 2)) {
+                scoreText.setText(`점수: ${score}`);
+                sounds.stomp.triggerAttackRelease("C3", "8n");
+            } else if (player.body.velocity.y > 0 && player.y < enemy.y - 15) {
                 enemy.disableBody(true, true);
-                player.setVelocityY(-250);
+                player.setVelocityY(-300);
                 score += 50;
-                scoreText.setText('Score: ' + score);
+                scoreText.setText(`점수: ${score}`);
                 sounds.stomp.triggerAttackRelease("C3", "8n");
             } else {
                 handlePlayerDeath(this);
             }
         }
-        
+
+        function hitSpike(player, spike) {
+            if (!player.isInvincible && player.active) {
+                handlePlayerDeath(this);
+            }
+        }
+
+        function hitSpring(player, spring) {
+            if (player.body.touching.down) {
+                player.setVelocityY(-700);
+                sounds.spring.triggerAttackRelease("C6", "8n");
+                
+                // 스프링 애니메이션
+                this.tweens.add({
+                    targets: spring,
+                    scaleY: 0.5,
+                    duration: 100,
+                    yoyo: true
+                });
+            }
+        }
+
         function handlePlayerDeath(scene) {
             if (gameOver || player.isInvincible) return;
             
-            gameOver = true;
+            player.isInvincible = true; // 중복 사망 방지
+            lives--;
+            livesText.setText(`❤️ x ${lives}`);
             sounds.death.triggerAttackRelease("C2", "4n");
 
-            player.setTint(0xff0000);
-            scene.cameras.main.shake(300, 0.008);
-            createEndScreen(scene, false);
+            // --- 수정된 부분: 사망 시 더블 점프 능력 상실 및 날개 제거 ---
+            player.canDoubleJump = false;
+            if (wingL) {
+                wingL.destroy();
+                wingL = null;
+            }
+            if (wingR) {
+                wingR.destroy();
+                wingR = null;
+            }
+            // --- 수정 끝 ---
+            
+            if (lives <= 0) {
+                gameOver = true;
+                player.setTint(0xff0000);
+                player.setVelocity(0, -300); // 죽을 때 살짝 튀어 오르는 효과
+                player.setCollideWorldBounds(false);
+                scene.cameras.main.shake(400, 0.01);
+                createEndScreen(scene, false, false);
+            } else {
+                player.setAlpha(0); // 플레이어 잠시 숨김
+                scene.cameras.main.flash(300, 255, 0, 0);
+
+                scene.time.delayedCall(500, () => {
+                    player.setPosition(100, 500);
+                    player.setVelocity(0, 0);
+                    player.setAlpha(1);
+
+                    const respawnTween = scene.tweens.add({
+                        targets: player,
+                        alpha: 0.5,
+                        duration: 150,
+                        yoyo: true,
+                        loop: 10
+                    });
+                    
+                    scene.time.delayedCall(3000, () => {
+                        if (player.active) {
+                           player.isInvincible = false;
+                           respawnTween.stop();
+                           player.setAlpha(1);
+                        }
+                    });
+                });
+            }
         }
 
-        function collectCoin(player, coin) { 
+        function collectCoin(player, coin) {
             if (gameOver) return;
-            coin.disableBody(true, true); 
-            score += 10; 
-            scoreText.setText('Score: ' + score); 
-            sounds.coin.triggerAttackRelease("E6", "8n"); 
+            coin.disableBody(true, true);
+            score += 10;
+            scoreText.setText(`점수: ${score}`);
+            sounds.coin.triggerAttackRelease("E6", "8n");
         }
-        
-        function reachGoal(player, goal) { 
-            if (gameOver) return; 
-            gameOver = true; 
-            player.setVelocityX(0); 
-            sounds.win.triggerAttackRelease("C5", "4n"); 
-            this.time.delayedCall(100, () => sounds.win.triggerAttackRelease("E5", "4n")); 
-            this.time.delayedCall(200, () => sounds.win.triggerAttackRelease("G5", "4n")); 
-            createEndScreen(this, true); 
-        }
-        
-        function createEndScreen(scene, isWin) {
-            const centerX = scene.cameras.main.worldView.x + scene.cameras.main.width / 2;
-            const centerY = scene.cameras.main.height / 2;
-            const text = isWin ? 'YOU WIN!' : 'GAME OVER';
-            const color = isWin ? '#ffd700' : '#ff0000';
-            scene.add.text(centerX, centerY - 50, text, { fontSize: '64px', fill: color, fontStyle: 'bold', stroke: '#000', strokeThickness: 8 }).setOrigin(0.5).setScrollFactor(0);
-            scene.add.text(centerX, centerY + 20, 'Final Score: ' + score, { fontSize: '32px', fill: '#fff', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setScrollFactor(0);
 
-            const restartText = scene.add.text(centerX, centerY + 80, '다시 시작하시겠습니까?', { fontSize: '24px', fill: '#fff', stroke: '#000', strokeThickness: 3}).setOrigin(0.5).setScrollFactor(0).setInteractive();
-            const restartHandler = () => {
-                // 한 번만 동작하도록 리스너 제거
-                restartText.removeListener('pointerdown', restartHandler);
-                score = 0; 
+        function reachGoal(player, goal) {
+            if (gameOver) return;
+            gameOver = true;
+            player.setVelocityX(0);
+            
+            // 시간 보너스 계산
+            const bonus = Math.max(0, Math.floor((timeBonus - levelTime * 10)));
+            score += bonus;
+            
+            sounds.win.triggerAttackRelease("C5", "4n");
+            this.time.delayedCall(100, () => sounds.win.triggerAttackRelease("E5", "4n"));
+            this.time.delayedCall(200, () => sounds.win.triggerAttackRelease("G5", "4n"));
+            
+            createEndScreen(this, true, currentLevel < 3);
+        }
+
+        function createEndScreen(scene, isWin, hasNextLevel) {
+            const centerX = scene.cameras.main.scrollX + scene.cameras.main.width / 2;
+            const centerY = scene.cameras.main.scrollY + scene.cameras.main.height / 2;
+            
+            const text = isWin ? (hasNextLevel ? '스테이지 클리어!' : '게임 클리어!') : '게임 오버';
+            const color = isWin ? '#ffd700' : '#ff0000';
+            
+            scene.add.text(centerX, centerY - 80, text, { 
+                fontSize: '48px', fill: color, fontStyle: 'bold', stroke: '#000', strokeThickness: 8 
+            }).setOrigin(0.5);
+            
+            scene.add.text(centerX, centerY - 20, `최종 점수: ${score}`, { 
+                fontSize: '28px', fill: '#fff', stroke: '#000', strokeThickness: 4 
+            }).setOrigin(0.5);
+
+            if (isWin && hasNextLevel) {
+                const nextBtn = scene.add.text(centerX, centerY + 40, '다음 레벨 →', { 
+                    fontSize: '24px', fill: '#00ff00', stroke: '#000', strokeThickness: 3
+                }).setOrigin(0.5).setInteractive();
+                
+                nextBtn.on('pointerdown', () => {
+                    currentLevel++;
+                    gameOver = false;
+                    scene.scene.restart();
+                });
+                nextBtn.on('pointerover', () => nextBtn.setFill('#ffff00'));
+                nextBtn.on('pointerout', () => nextBtn.setFill('#00ff00'));
+            }
+
+            const restartBtn = scene.add.text(centerX, centerY + (hasNextLevel && isWin ? 90 : 50), '다시 시작', { 
+                fontSize: '20px', fill: '#fff', stroke: '#000', strokeThickness: 3
+            }).setOrigin(0.5).setInteractive();
+            
+            restartBtn.on('pointerdown', () => {
+                if (!isWin || !hasNextLevel) { // 게임오버 또는 최종 클리어 시 초기화
+                    currentLevel = 1;
+                    score = 0;
+                    lives = 3;
+                }
                 gameOver = false;
                 scene.scene.restart();
-            };
-            restartText.on('pointerdown', restartHandler);
-            restartText.on('pointerover', () => restartText.setFill('#ffff00'));
-            restartText.on('pointerout', () => restartText.setFill('#ffffff'));
+            });
+            restartBtn.on('pointerover', () => restartBtn.setFill('#ffff00'));
+            restartBtn.on('pointerout', () => restartBtn.setFill('#ffffff'));
         }
 
-
-        // --- 그래픽 텍스처 생성 함수들 ---
+        // 텍스처 생성 함수들
         function createCoconutPlayerTexture(scene) {
-            const key = 'coconutPlayer'; if (scene.textures.exists(key)) return key;
+            const key = 'coconutPlayer';
+            if (scene.textures.exists(key)) return key;
             const g = scene.make.graphics({ width: 40, height: 40 }, false);
-            g.fillStyle(0x6B4F3A); g.fillEllipse(20, 20, 40, 40);
-            g.fillStyle(0xffffff); g.fillEllipse(13, 18, 10, 12); g.fillEllipse(27, 18, 10, 12);
-            g.fillStyle(0x000000); g.fillCircle(15, 20, 4); g.fillCircle(25, 20, 4);
-            g.fillStyle(0x2ecc71); g.fillTriangle(20, 0, 15, 8, 25, 8);
-            g.generateTexture(key, 40, 40); g.destroy(); return key;
+            g.fillStyle(0x6B4F3A);
+            g.fillEllipse(20, 20, 40, 40);
+            g.fillStyle(0xffffff);
+            g.fillEllipse(13, 18, 12, 14);
+            g.fillEllipse(27, 18, 12, 14);
+            g.fillStyle(0x000000);
+            g.fillCircle(14, 20, 5);
+            g.fillCircle(26, 20, 5);
+            g.fillStyle(0x2ecc71);
+            g.fillTriangle(20, 0, 15, 8, 25, 8);
+            g.generateTexture(key, 40, 40);
+            g.destroy();
+            return key;
         }
+
         function createCoinTexture(scene, size = 24) {
-             const key = `coinTexture${size}`; if (scene.textures.exists(key)) return key;
-             const g = scene.make.graphics({ width: size, height: size }, false);
-             g.fillStyle(0xffd700); g.fillCircle(size/2, size/2, size/2);
-             g.fillStyle(0xffa500); g.fillCircle(size/2, size/2, size/3);
-             g.generateTexture(key, size, size); g.destroy(); return key;
+            const key = `coinTexture${size}`;
+            if (scene.textures.exists(key)) return key;
+            const g = scene.make.graphics({ width: size, height: size }, false);
+            g.fillStyle(0xffd700);
+            g.fillCircle(size/2, size/2, size/2);
+            g.fillStyle(0xffa500);
+            g.fillCircle(size/2, size/2, size/3);
+            g.fillStyle(0xffff00);
+            g.fillRect(size/2 - 3, size/2 - 3, 6, 6);
+            g.generateTexture(key, size, size);
+            g.destroy();
+            return key;
         }
+
         function createEnemyTexture(scene) {
-            const key = 'enemyTexture'; if (scene.textures.exists(key)) return key;
+            const key = 'enemyTexture';
+            if (scene.textures.exists(key)) return key;
             const g = scene.make.graphics({ width: 32, height: 32 }, false);
-            g.fillStyle(0x8B4513); g.fillEllipse(16, 17, 32, 28);
-            g.fillStyle(0xffffff); g.fillEllipse(10, 12, 8, 10); g.fillEllipse(22, 12, 8, 10);
-            g.fillStyle(0x000000); g.fillCircle(10, 12, 3); g.fillCircle(22, 12, 3);
-            g.generateTexture(key, 32, 32); g.destroy(); return key;
+            g.fillStyle(0x8B4513);
+            g.fillEllipse(16, 17, 32, 28);
+            g.fillStyle(0xffffff);
+            g.fillEllipse(10, 12, 8, 10);
+            g.fillEllipse(22, 12, 8, 10);
+            g.fillStyle(0x000000);
+            g.fillCircle(10, 12, 3);
+            g.fillCircle(22, 12, 3);
+            g.fillStyle(0xff0000);
+            g.fillRect(8, 22, 16, 3);
+            g.generateTexture(key, 32, 32);
+            g.destroy();
+            return key;
         }
+
         function createBrickTexture(scene, width, height) {
-            const key = `brickTexture${width}x${height}`; if (scene.textures.exists(key)) return key;
+            const key = `brickTexture${width}x${height}`;
+            if (scene.textures.exists(key)) return key;
             const g = scene.make.graphics({ width, height }, false);
-            g.fillStyle(0xD2691E); g.fillRect(0, 0, width, height);
-            g.lineStyle(2, 0x8B4513); g.strokeRect(0, 0, width, height);
+            g.fillStyle(0xD2691E);
+            g.fillRect(0, 0, width, height);
+            g.lineStyle(2, 0x8B4513);
+            g.strokeRect(0, 0, width, height);
             g.lineBetween(0, height/2, width, height/2);
             if (width > 50) g.lineBetween(width/2, 0, width/2, height);
-            g.generateTexture(key, width, height); g.destroy(); return key;
+            g.generateTexture(key, width, height);
+            g.destroy();
+            return key;
         }
+
         function createQuestionBlockTexture(scene) {
-            const key = 'qBlock'; if (scene.textures.exists(key)) return key;
+            const key = 'qBlock';
+            if (scene.textures.exists(key)) return key;
             const rt = scene.make.renderTexture({ width: 40, height: 40 }, false);
             const g = scene.make.graphics({ add: false });
             g.fillStyle(0xf39c12);
             g.fillRect(0, 0, 40, 40);
+            g.lineStyle(3, 0xffaa00);
+            g.strokeRect(2, 2, 36, 36);
             rt.draw(g);
             g.destroy();
             const text = scene.make.text({
                 x: 12,
-                y: 5,
+                y: 8,
                 text: '?',
                 style: {
-                    font: '28px "Press Start 2P"',
-                    fill: '#ffffff'
+                    font: '24px "Press Start 2P"',
+                    fill: '#ffffff',
                 },
                 add: false
             });
@@ -398,6 +728,7 @@
             rt.saveTexture(key);
             return key;
         }
+
         function createStarTexture(scene) {
             const key = 'star';
             if (scene.textures.exists(key)) return key;
@@ -415,13 +746,59 @@
             }
             g.fillPoints(points, true);
             g.fillStyle(0x000000);
-            g.fillCircle(11, 13, 3);
-            g.fillCircle(21, 13, 3);
+            g.fillCircle(11, 13, 2);
+            g.fillCircle(21, 13, 2);
             g.generateTexture(key, 32, 32);
+            g.destroy();
+            return key;
+        }
+
+        function createWingTexture(scene) {
+            const key = 'wing';
+            if (scene.textures.exists(key)) return key;
+            const g = scene.make.graphics({ width: 32, height: 32 }, false);
+            g.fillStyle(0xecf0f1);
+            g.beginPath();
+            g.moveTo(16, 4);
+            g.lineTo(4, 16);
+            g.lineTo(16, 28);
+            g.lineTo(28, 16);
+            g.closePath();
+            g.fillPath();
+            g.lineStyle(2, 0xbdc3c7);
+            g.strokePath();
+            g.generateTexture(key, 32, 32);
+            g.destroy();
+            return key;
+        }
+
+        function createSpikeTexture(scene) {
+            const key = 'spike';
+            if (scene.textures.exists(key)) return key;
+            const g = scene.make.graphics({ width: 30, height: 30 }, false);
+            g.fillStyle(0xc0392b);
+            g.fillTriangle(15, 0, 0, 30, 30, 30);
+            g.lineStyle(2, 0x8b0000);
+            g.strokeTriangle(15, 0, 0, 30, 30, 30);
+            g.generateTexture(key, 30, 30);
+            g.destroy();
+            return key;
+        }
+
+        function createSpringTexture(scene) {
+            const key = 'spring';
+            if (scene.textures.exists(key)) return key;
+            const g = scene.make.graphics({ width: 40, height: 30 }, false);
+            g.fillStyle(0x3498db);
+            g.fillRect(0, 20, 40, 10);
+            g.fillStyle(0x2980b9);
+            for (let i = 0; i < 5; i++) {
+                g.fillRect(i * 8, 10 + (i % 2) * 5, 8, 10);
+            }
+            g.generateTexture(key, 40, 30);
             g.destroy();
             return key;
         }
     </script>
 </body>
 </html>
-
