@@ -245,13 +245,11 @@
         }
 
         function createLevelMap(scene, worldWidth, level) {
-            // *** 충돌 문제 해결 ***
-            // 벽돌 블록 생성 로직을 수정하여 물리 엔진이 올바르게 크기를 인식하도록 함
             const createStaticPlatform = (x, y, width, height) => {
                 const platform = platforms.create(x, y);
                 platform.setTexture(createBrickTexture(scene, width, height));
                 platform.setDisplaySize(width, height);
-                platform.refreshBody(); // SetTexture, setDisplaySize 이후에 refreshBody()를 호출해야 함
+                platform.refreshBody();
             };
 
             // 레벨 1: 초급
@@ -454,23 +452,53 @@
 
         function hitEnemy(player, enemy) {
             if (gameOver || !player.active) return;
+
+            // Case 1: Player is invincible (e.g., from a star)
             if (player.isInvincible) {
                 enemy.disableBody(true, true);
                 score += 100;
+                scoreText.setText(`점수: ${score}`);
                 sounds.stomp.triggerAttackRelease("C3", "8n");
-            } else if (player.body.velocity.y > 0 && player.y < enemy.y - 15) {
+                return;
+            }
+
+            // Case 2: Player stomps on the enemy
+            // *** 오류 수정: y좌표 판정 조건을 -15에서 -10으로 완화 ***
+            if (player.body.velocity.y > 0 && player.y < enemy.y - 10) {
                 enemy.disableBody(true, true);
                 player.setVelocityY(-300);
                 score += 50;
+                scoreText.setText(`점수: ${score}`);
                 sounds.stomp.triggerAttackRelease("C3", "8n");
-            } else if (player.canShootFire) {
+                return;
+            }
+
+            // Case 3: Player gets hit (is not invincible and did not stomp)
+            if (player.canShootFire) {
+                // Lose the fire power-up instead of a life
                 player.canShootFire = false;
                 player.clearTint();
-                handlePlayerDeath(this); // 파이어 상태에서 맞으면 작아지는 대신 한 목숨 잃도록 함 (원작과 다름)
+                sounds.powerup.triggerAttackRelease("G3", "4n"); // Power-down sound
+
+                // Grant temporary invincibility to prevent chain-hits
+                player.isInvincible = true;
+                this.tweens.add({
+                    targets: player,
+                    alpha: 0.5,
+                    duration: 200,
+                    yoyo: true,
+                    repeat: 5, // Blink for a total of 2 seconds
+                    onComplete: () => {
+                        if (player.active) {
+                            player.isInvincible = false;
+                            player.setAlpha(1);
+                        }
+                    }
+                });
             } else {
+                // No power-ups, so the player dies
                 handlePlayerDeath(this);
             }
-            scoreText.setText(`점수: ${score}`);
         }
 
         function hitSpike(player, spike) {
